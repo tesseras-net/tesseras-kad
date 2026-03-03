@@ -1,0 +1,158 @@
+.\" Copyright (c) 2025 Murilo Ijanc <murilo@ijanc.org>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\"
+.Dd March 3, 2026
+.Dt KAD 1
+.Os
+.Sh NAME
+.Nm kad
+.Nd Kademlia DHT node
+.Sh SYNOPSIS
+.Nm kad
+.Cm start
+.Fl p Ar port
+.Op Fl b Ar host:port
+.Op Fl i
+.Nm kad
+.Cm put
+.Fl b Ar host:port
+.Ar key value
+.Nm kad
+.Cm get
+.Fl b Ar host:port
+.Ar key
+.Sh DESCRIPTION
+The
+.Nm
+utility implements a Kademlia distributed hash table node.
+It can run as a long-lived DHT participant or as a one-shot client
+to store and retrieve values from the network.
+.Pp
+Values are stored under the SHA-1 hash of the provided
+.Ar key .
+The maximum value size is 65000 bytes.
+Stored values expire after 24 hours and are republished
+every hour.
+.Pp
+The commands are as follows:
+.Bl -tag -width Ds
+.It Cm start
+Start a DHT node listening on the given
+.Ar port .
+The node binds to all interfaces
+.Pq 0.0.0.0 .
+If
+.Fl b
+is specified, the node joins an existing network by bootstrapping
+through the given address.
+Without
+.Fl b ,
+the node starts as the first node of a new network.
+.Pp
+The node runs three background threads for routing table refresh,
+value republishing, and value expiry.
+.It Cm put
+Store a key-value pair in the DHT.
+A temporary node is created, joins the network via the bootstrap
+address, stores the value, and exits.
+.It Cm get
+Retrieve a value from the DHT by key.
+A temporary node is created, joins the network via the bootstrap
+address, looks up the value, prints it to standard output, and exits.
+.El
+.Pp
+The options are as follows:
+.Bl -tag -width Ds
+.It Fl b Ar host:port
+Bootstrap address of an existing node in the network.
+Required for
+.Cm put
+and
+.Cm get ;
+optional for
+.Cm start .
+.It Fl i
+Start in interactive mode.
+Instead of blocking on inbound requests, the node presents a REPL
+prompt where commands can be entered.
+Only valid with
+.Cm start .
+.It Fl p Ar port
+UDP port to listen on.
+Required for
+.Cm start .
+.El
+.Sh INTERACTIVE COMMANDS
+When started with
+.Fl i ,
+.Nm
+presents a
+.Ql kad>
+prompt accepting the following commands:
+.Bl -tag -width "put KEY VALUE"
+.It Ic put Ar key value
+Store a value in the DHT.
+.It Ic get Ar key
+Retrieve a value from the DHT.
+.It Ic find Ar key
+Find the closest nodes to a key.
+.It Ic ping Ar host:port
+Ping a remote node.
+.It Ic info
+Display local node ID, address, routing table size,
+and storage count.
+.It Ic help
+Display a summary of available commands.
+.It Ic quit | exit
+Exit the program.
+.El
+.Sh EXIT STATUS
+.Ex -std kad
+.Sh EXAMPLES
+Start a bootstrap node on port 4000:
+.Pp
+.Dl $ kad start -p 4000
+.Pp
+Start a second node and join the network:
+.Pp
+.Dl $ kad start -p 4001 -b 127.0.0.1:4000
+.Pp
+Store a value:
+.Pp
+.Dl $ kad put -b 127.0.0.1:4000 greeting hello
+.Pp
+Retrieve a value:
+.Pp
+.Dl $ kad get -b 127.0.0.1:4000 greeting
+.Pp
+Start an interactive node:
+.Pp
+.Dl $ kad start -p 4002 -b 127.0.0.1:4000 -i
+.Pp
+Then at the REPL prompt:
+.Bd -literal -offset indent
+kad> put mykey myvalue
+kad> get mykey
+kad> info
+kad> quit
+.Ed
+.Sh SEE ALSO
+.Rs
+.%A Petar Maymounkov
+.%A David Mazieres
+.%T Kademlia: A Peer-to-peer Information System Based on the XOR Metric
+.%D 2002
+.Re
+.Sh AUTHORS
+.An Murilo Ijanc Aq Mt murilo@ijanc.org

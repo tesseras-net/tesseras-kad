@@ -1,0 +1,14 @@
+[package]
+name = "kad"
+version = "0.1.0"
+authors = ["Murilo Ijanc <murilo@ijanc.org>"]
+categories = ["command-line-utilities", "network-programming"]
+edition = "2024"
+homepage = "https://tesseras.net"
+keywords = ["dht", "p2p", "repl", "kademlia", "tesseras"]
+license = "ISC"
+repository = "https://git.sr.ht/~ijanc/tesseras-kad"
+rust-version = "1.90"
+description = "Study Kaddemlia DHT"
+
+[dependencies]
