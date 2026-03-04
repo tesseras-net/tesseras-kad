@@ -70,7 +70,13 @@ pub enum Message {
     /// Liveness check response.
     PingResponse,
     /// Request to store a key-value pair.
-    StoreRequest { key: Key, value: Vec<u8> },
+    /// `is_cache` marks FIND_VALUE cache stores
+    /// (exponential TTL) vs primary stores (full TTL).
+    StoreRequest {
+        key: Key,
+        value: Vec<u8>,
+        is_cache: bool,
+    },
     /// Acknowledgement of a store.
     StoreResponse,
     /// Request for the `K` closest nodes to `target`.
@@ -183,7 +189,13 @@ fn decode_contacts(data: &[u8]) -> Result<Vec<Contact>> {
     let mut contacts = Vec::new();
     let mut offset = 0;
     while offset < data.len() {
-        contacts.push(decode_contact(data, &mut offset)?);
+        if contacts.len() >= crate::bucket::K {
+            return Err(Error::Protocol(
+                "too many contacts".into(),
+            ));
+        }
+        contacts
+            .push(decode_contact(data, &mut offset)?);
     }
     Ok(contacts)
 }
@@ -193,7 +205,7 @@ fn decode_contacts(data: &[u8]) -> Result<Vec<Contact>> {
 pub fn encode(
     header: &Header,
     msg: &Message,
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
     let msg_type = match msg {
         Message::PingRequest => MsgType::PingRequest,
         Message::PingResponse => MsgType::PingResponse,
@@ -218,8 +230,14 @@ pub fn encode(
     let mut payload = Vec::new();
     match msg {
         Message::PingRequest | Message::PingResponse => {}
-        Message::StoreRequest { key, value } => {
+        Message::StoreRequest {
+            key,
+            value,
+            is_cache,
+        } => {
             payload.extend_from_slice(key.as_bytes());
+            payload
+                .push(u8::from(*is_cache));
             payload.extend_from_slice(value);
         }
         Message::StoreResponse => {}
@@ -251,6 +269,11 @@ pub fn encode(
         }
     }
 
+    if payload.len() > u16::MAX as usize {
+        return Err(Error::Protocol(
+            "payload too large".into(),
+        ));
+    }
     let payload_len = payload.len() as u16;
     let mut buf =
         Vec::with_capacity(HEADER_SIZE + payload.len());
@@ -262,7 +285,7 @@ pub fn encode(
     buf.extend_from_slice(header.sender_id.as_bytes());
     buf.extend_from_slice(&payload_len.to_be_bytes());
     buf.extend_from_slice(&payload);
-    buf
+    Ok(buf)
 }
 
 /// Deserialize a byte slice into a header and
@@ -315,16 +338,18 @@ pub fn decode(
         MsgType::PingRequest => Message::PingRequest,
         MsgType::PingResponse => Message::PingResponse,
         MsgType::StoreRequest => {
-            if payload.len() < 20 {
+            if payload.len() < 21 {
                 return Err(Error::Protocol(
                     "store request too short".into(),
                 ));
             }
             let mut key_bytes = [0u8; 20];
             key_bytes.copy_from_slice(&payload[..20]);
+            let is_cache = payload[20] != 0;
             Message::StoreRequest {
                 key: Key::from_bytes(key_bytes),
-                value: payload[20..].to_vec(),
+                value: payload[21..].to_vec(),
+                is_cache,
             }
         }
         MsgType::StoreResponse => Message::StoreResponse,
@@ -425,7 +450,8 @@ mod tests {
 
     fn roundtrip(msg: Message) {
         let header = test_header();
-        let encoded = encode(&header, &msg);
+        let encoded =
+            encode(&header, &msg).unwrap();
         let (h2, m2) = decode(&encoded).unwrap();
         assert_eq!(h2.rpc_id, header.rpc_id);
         assert_eq!(h2.sender_id, header.sender_id);
@@ -442,14 +468,17 @@ mod tests {
                 Message::StoreRequest {
                     key: k1,
                     value: v1,
+                    is_cache: c1,
                 },
                 Message::StoreRequest {
                     key: k2,
                     value: v2,
+                    is_cache: c2,
                 },
             ) => {
                 assert_eq!(k1, k2);
                 assert_eq!(v1, v2);
+                assert_eq!(c1, c2);
             }
             (
                 Message::StoreResponse,
@@ -523,6 +552,12 @@ mod tests {
         roundtrip(Message::StoreRequest {
             key: Key::from_bytes([0xAA; 20]),
             value: b"hello world".to_vec(),
+            is_cache: false,
+        });
+        roundtrip(Message::StoreRequest {
+            key: Key::from_bytes([0xBB; 20]),
+            value: b"cached".to_vec(),
+            is_cache: true,
         });
         roundtrip(Message::StoreResponse);
     }

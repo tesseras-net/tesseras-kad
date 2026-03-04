@@ -52,3 +52,15 @@ impl From<io::Error> for Error {
 
 /// A `Result` alias using [`Error`] as the error type.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Lock a mutex, recovering from poisoning.
+///
+/// If a thread panicked while holding the lock, the
+/// data is still accessible. We treat poisoning as
+/// non-fatal since our lock-guarded operations are
+/// short and unlikely to leave inconsistent state.
+pub fn lock<T>(
+    m: &std::sync::Mutex<T>,
+) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}

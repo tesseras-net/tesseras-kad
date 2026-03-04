@@ -49,6 +49,7 @@ impl NodeId {
     }
 
     /// Compute the XOR distance to `other`.
+    #[must_use]
     pub fn distance(&self, other: &NodeId) -> Distance {
         let mut d = [0u8; 20];
         for (i, byte) in d.iter_mut().enumerate() {
@@ -59,6 +60,7 @@ impl NodeId {
 
     /// Number of leading zero bits in the XOR distance.
     /// Returns 0..=159 for distinct IDs, 160 for identical.
+    #[must_use]
     pub fn common_prefix_length(
         &self,
         other: &NodeId,

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::error::{Error, Result};
+use crate::error::{self, Error, Result};
 use crate::message::{
     self, Header, Message, RpcId,
 };
@@ -92,7 +92,13 @@ impl Rpc {
                         {
                             continue;
                         }
-                        Err(_) => continue,
+                        Err(e) => {
+                            eprintln!(
+                                "rpc: socket \
+                                 recv error: {e}"
+                            );
+                            continue;
+                        }
                     };
 
                     let (header, message) =
@@ -100,7 +106,14 @@ impl Rpc {
                             &buf[..n],
                         ) {
                             Ok(r) => r,
-                            Err(_) => continue,
+                            Err(e) => {
+                                eprintln!(
+                                    "rpc: decode \
+                                     error from \
+                                     {from}: {e}"
+                                );
+                                continue;
+                            }
                         };
 
                     let inbound = Inbound {
@@ -116,9 +129,8 @@ impl Rpc {
                     // Check if this is a response
                     // to a pending request.
                     let sender = {
-                        let mut map = pending
-                            .lock()
-                            .unwrap();
+                        let mut map =
+                            error::lock(&pending);
                         map.remove(
                             &inbound.header.rpc_id,
                         )
@@ -168,11 +180,11 @@ impl Rpc {
 
         {
             let mut map =
-                self.pending.lock().unwrap();
+                error::lock(&self.pending);
             map.insert(rpc_id, tx);
         }
 
-        let data = message::encode(&header, &msg);
+        let data = message::encode(&header, &msg)?;
         self.socket.send_to(&data, to)?;
 
         match rx.recv_timeout(REQUEST_TIMEOUT) {
@@ -182,7 +194,7 @@ impl Rpc {
             )),
             Err(_) => {
                 let mut map =
-                    self.pending.lock().unwrap();
+                    error::lock(&self.pending);
                 map.remove(&rpc_id);
                 Err(Error::Timeout)
             }
@@ -200,7 +212,7 @@ impl Rpc {
             rpc_id,
             sender_id: self.local_id,
         };
-        let data = message::encode(&header, &msg);
+        let data = message::encode(&header, &msg)?;
         self.socket.send_to(&data, to)?;
         Ok(())
     }

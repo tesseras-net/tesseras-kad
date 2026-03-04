@@ -55,6 +55,11 @@ impl KBucket {
         self.entries.is_empty()
     }
 
+    /// Return `true` if the replacement cache is empty.
+    pub fn cache_is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+
     /// Insert or update a contact.
     ///
     /// If the contact is already present it is moved
@@ -116,13 +121,27 @@ impl KBucket {
 
     /// Evict the LRU entry and insert a new contact,
     /// or promote from replacement cache.
+    ///
+    /// If `old_id` is no longer present and the bucket
+    /// is already full, the insertion is skipped to
+    /// avoid exceeding K entries.
     pub fn evict_and_insert(
         &mut self,
         old_id: &NodeId,
         new: Option<Contact>,
     ) {
+        let had_entry = self
+            .entries
+            .iter()
+            .any(|e| e.contact.node_id == *old_id);
         self.remove(old_id);
+        if !had_entry && self.entries.len() >= K {
+            return;
+        }
         if let Some(contact) = new {
+            self.cache.retain(|e| {
+                e.contact.node_id != contact.node_id
+            });
             self.entries
                 .push(ContactEntry::new(contact));
         } else if let Some(cached) = self.cache.pop() {
@@ -167,45 +186,6 @@ impl KBucket {
         self.last_updated.elapsed() > threshold
     }
 
-    /// Generate a random NodeId that would fall into
-    /// this bucket at the given index relative to a
-    /// local NodeId.
-    pub fn random_id_in_range(
-        local_id: &NodeId,
-        bucket_index: usize,
-    ) -> NodeId {
-        let mut bytes = [0u8; 20];
-        crate::rand::fill_bytes(&mut bytes);
-
-        // XOR with local_id to get distance, then
-        // ensure the distance has exactly
-        // `bucket_index` leading zero bits.
-        let mut dist = [0u8; 20];
-        for i in 0..20 {
-            dist[i] = bytes[i] ^ local_id.0[i];
-        }
-
-        // Clear bits above bucket_index.
-        let byte_idx = bucket_index / 8;
-        let bit_idx = bucket_index % 8;
-        for b in dist.iter_mut().take(byte_idx) {
-            *b = 0;
-        }
-        if byte_idx < 20 {
-            // Clear high bits, set the target bit.
-            dist[byte_idx] &= 0xFF >> bit_idx;
-            dist[byte_idx] |= 0x80 >> bit_idx;
-        }
-
-        // XOR back with local_id to get a NodeId at
-        // the right distance.
-        let mut result = [0u8; 20];
-        for i in 0..20 {
-            result[i] = dist[i] ^ local_id.0[i];
-        }
-        NodeId::from_bytes(result)
-    }
-
     /// Return a slice of all entries.
     pub fn entries(&self) -> &[ContactEntry] {
         &self.entries
@@ -216,6 +196,43 @@ impl KBucket {
         &mut self,
     ) -> &mut [ContactEntry] {
         &mut self.entries
+    }
+
+    /// Consume the bucket and return its entries.
+    pub fn into_entries(self) -> Vec<ContactEntry> {
+        self.entries
+    }
+
+    /// Consume the bucket and return its cache.
+    pub fn into_cache(self) -> Vec<ContactEntry> {
+        self.cache
+    }
+
+    /// Consume the bucket, returning entries and cache.
+    pub fn into_parts(
+        self,
+    ) -> (Vec<ContactEntry>, Vec<ContactEntry>) {
+        (self.entries, self.cache)
+    }
+
+    /// Insert a pre-existing entry, preserving its
+    /// liveness metadata. Used during bucket splitting.
+    pub fn insert_entry(&mut self, entry: ContactEntry) {
+        if self.entries.len() < K {
+            self.entries.push(entry);
+        }
+    }
+
+    /// Add a pre-existing entry to the replacement
+    /// cache, preserving its metadata. Used during
+    /// bucket splitting.
+    pub fn add_to_cache_entry(
+        &mut self,
+        entry: ContactEntry,
+    ) {
+        if self.cache.len() < K {
+            self.cache.push(entry);
+        }
     }
 
     fn add_to_cache(&mut self, contact: Contact) {
@@ -303,6 +320,69 @@ mod tests {
                     [0xFF; 20],
                 )
         }));
+    }
+
+    #[test]
+    fn evict_none_with_empty_cache_shrinks() {
+        let mut bucket = KBucket::new();
+        for i in 0..5 {
+            bucket.insert(make_contact(i));
+        }
+        assert_eq!(bucket.len(), 5);
+        assert!(bucket.cache_is_empty());
+
+        let old =
+            bucket.entries[0].contact.node_id;
+        bucket.evict_and_insert(&old, None);
+        // With empty cache, entry is removed and
+        // nothing replaces it.
+        assert_eq!(bucket.len(), 4);
+    }
+
+    #[test]
+    fn into_entries_returns_all() {
+        let mut bucket = KBucket::new();
+        for i in 0..5 {
+            bucket.insert(make_contact(i));
+        }
+        let entries = bucket.into_entries();
+        assert_eq!(entries.len(), 5);
+    }
+
+    #[test]
+    fn into_cache_returns_cached() {
+        let mut bucket = KBucket::new();
+        for i in 0..K {
+            bucket.insert(make_contact(i as u8));
+        }
+        // Goes to cache.
+        bucket.insert(make_contact(0xFE));
+        let cache = bucket.into_cache();
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn insert_entry_preserves_metadata() {
+        let mut bucket = KBucket::new();
+        let mut entry =
+            ContactEntry::new(make_contact(1));
+        entry.fail_count = 3;
+        bucket.insert_entry(entry);
+        assert_eq!(bucket.len(), 1);
+        assert_eq!(
+            bucket.entries()[0].fail_count,
+            3
+        );
+    }
+
+    #[test]
+    fn add_to_cache_entry_preserves_metadata() {
+        let mut bucket = KBucket::new();
+        let mut entry =
+            ContactEntry::new(make_contact(1));
+        entry.fail_count = 2;
+        bucket.add_to_cache_entry(entry);
+        assert!(!bucket.cache_is_empty());
     }
 
     #[test]
